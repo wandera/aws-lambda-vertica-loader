@@ -1,0 +1,14 @@
+# OS or Editor folders
+.DS_Store
+.cache
+.project
+.settings
+.tags
+.tmproj
+.idea
+nbproject
+Thumbs.db
+tags
+
+# NPM packages folder.
+node_modules/
