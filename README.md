@@ -1,3 +1,5 @@
+    This is modified copy of https://github.com/awslabs/aws-lambda-redshift-loader
+
 # Automatic HP Vertica Database Loader for AWS S3
 
 Are you using Amazon Web Services for your HP Vertica cluster(s)? Are you staging your source data files on AWS S3 storage? If so, this AWS S3 loader for HP Vertica may be just the thing for you! It will automatically pick up files as they are dropped into S3, and load them into target tables in one or more HP Vertica clusters. 
