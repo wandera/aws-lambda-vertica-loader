@@ -18,10 +18,10 @@
  */
 
 
-batchId = 'batchId';
-currentBatch = 'currentBatch';
-s3prefix = 's3Prefix';
-lastUpdate = 'lastUpdate';
+batchid = 'batchid';
+currentbatch = 'currentbatch';
+s3prefix = 's3prefix';
+lastupdate = 'lastupdate';
 complete = 'complete';
 locked = 'locked';
 open = 'open';

@@ -52,8 +52,7 @@
         "setup.js",
         "defaults.js",
         "defaults_custom.js",
-        "unlockBatch.js",
-        "upgrades.js"
+        "unlockBatch.js"
     ],
     "repository": {
         "type": "git",

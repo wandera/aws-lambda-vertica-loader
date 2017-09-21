@@ -8,40 +8,48 @@ const DDL = {
   TABLES: {
     batches:
       'CREATE TABLE ' + DB_STRUCTURE_NAMES.batchesTable + ' (' +
-      's3Prefix VARCHAR(200) PRIMARY KEY,' +
-      'batchId VARCHAR(36),' +
-      'clusterLoadStatements TEXT,' +
-      'clusterLoadStatus TEXT,' +
+      's3prefix VARCHAR(200),' +
+      'batchid VARCHAR(36),' +
+      'clusterloadstatements TEXT,' +
+      'clusterloadstatus TEXT,' +
       'entries VARCHAR(300)[],' +
-      'lastUpdate NUMERIC(13,3),' +
+      'lastupdate NUMERIC(13,3),' +
       'status VARCHAR(10),' +
-      'errorMessage TEXT)',
+      'errormessage TEXT,' +
+      'PRIMARY KEY(s3prefix, batchid))',
     processedFiles:
       'CREATE TABLE ' + DB_STRUCTURE_NAMES.processedFilesTable + ' (' +
-      'loadFile VARCHAR(300) PRIMARY KEY,' +
-      'batchId VARCHAR(36))',
+      'loadfile VARCHAR(300),' +
+      'batchid VARCHAR(36))',
     config:
       'CREATE TABLE ' + DB_STRUCTURE_NAMES.configTable + ' (' +
-      's3Prefix VARCHAR(200) PRIMARY KEY,' +
-      'batchSize INTEGER,' +
-      'batchTimeoutSecs INTEGER,' +
-      'copyOptions VARCHAR(200),' +
-      'currentBatch VARCHAR(36),' +
-      'lastUpdate NUMERIC(13,3),' +
-      'filenameFilterRegex VARCHAR(100),' +
-      'loadClusters JSON,' +
-      's3MountDir VARCHAR(100),' +
-      'successTopicARN VARCHAR(100),' +
-      'failureTopicARN VARCHAR(100),' +
+      's3prefix VARCHAR(200) PRIMARY KEY,' +
+      'batchsize INTEGER,' +
+      'batchtimeoutsecs INTEGER,' +
+      'copyoptions VARCHAR(200),' +
+      'currentbatch VARCHAR(36),' +
+      'lastupdate NUMERIC(13,3),' +
+      'lastbatchrotation NUMERIC(13,3),' +
+      'filenamefilterregex VARCHAR(100),' +
+      'loadclusters JSON,' +
+      's3mountdir VARCHAR(100),' +
+      'successtopicarn VARCHAR(100),' +
+      'failuretopicarn VARCHAR(100),' +
       'version VARCHAR(20))'
   },
   INDEXES: {
-    batches: 'CREATE INDEX ON ' + DB_STRUCTURE_NAMES.batchesIndex + ' (batchId)'
+    // This index is needed for queryBatches.js script
+    batches: 'CREATE INDEX ON ' + DB_STRUCTURE_NAMES.batchesIndex + ' (status, lastupdate)',
+    files: 'CREATE INDEX ON ' + DB_STRUCTURE_NAMES.processedFilesTable + ' (loadfile)'
   }
 };
 
 function quote(value) {
-  return "'" + value + "'";
+  if (value) {
+    return "'" + value + "'";
+  } else {
+    return null;
+  }
 }
 
 function unwrapFirstRow(data) {
@@ -65,32 +73,91 @@ function callWithFirstRow(callback, err, data) {
 ***********
 */
 exports.updateBatch = function(client, entity, callback) {
+  const select = "SELECT * FROM " + DB_STRUCTURE_NAMES.batchesTable + " " +
+    "WHERE " +
+      "batchid = " + quote(entity.batchid) + " AND " +
+      "s3prefix = " + quote(entity.s3prefix);
+
   const update =
     "UPDATE " + DB_STRUCTURE_NAMES.batchesTable + " " +
     "SET " +
-      "entries = entries || " + quote(entity.entry) + "," +
-      "lastUpdate = " + entity.lastUpdate + "," +
+      "entries = array_agg(DISTINCT array_append(entries, " + quote(entity.entry) + "))," +
+      "lastupdate = " + entity.lastupdate + "," +
       "status = " + quote(entity.status) + " " +
     "WHERE " +
-      "(status = 'open' OR status is null) AND " +
-      "batchId = " + quote(entity.batchId) + " AND " +
-      "s3Prefix = " + quote(entity.s3Prefix) + " " +
-    "RETURNING entries";
+      "batchid = " + quote(entity.batchid) + " AND " +
+      "s3prefix = " + quote(entity.s3prefix);
 
-  client.query(update, function (err, data) {
-    callWithFirstRow(callback, err, data);
+  const insert = "INSERT INTO " + DB_STRUCTURE_NAMES.batchesTable + " (batchid, s3prefix, entries, lastupdate, status) VALUES (" +
+    quote(entity.batchid) + "," +
+    quote(entity.s3prefix) + "," +
+    "ARRAY[" + quote(entity.entry) + "]," +
+    entity.lastupdate + "," +
+    quote(entity.status) + ")";
+
+
+  function finishWithError(error) {
+    client.query("ROLLBACK", function(err) {
+      if (err) {
+        console.log(err);
+      }
+      callback(error);
+    });
+  }
+
+  function finishWithSuccess() {
+    client.query("COMMIT", function(err) {
+      callback(err);
+    });
+  }
+
+  function finish(err) {
+    if (err) {
+      finishWithError(err);
+    } else {
+      finishWithSuccess();
+    }
+  }
+
+  client.query("BEGIN", function(err) {
+    if (!err) {
+      client.query(select, function(err, data) {
+        if(!err) {
+          if (data.rowCount === 1) {
+            if (data.rows[0].status !== 'open') {
+              //There is batch in the database but its not open
+              finishWithError({code: conditionCheckFailed});
+            } else {
+              //Update existing open batch
+              client.query(update, function (err) {
+                finish(err);
+              });
+            }
+          } else {
+            // There is no existing batch so create new one
+            client.query(insert, function (err) {
+              finish(err);
+            });
+          }
+        } else {
+          finishWithError(err);
+        }
+      });
+    } else {
+      callback(err);
+    }
   });
 };
 
 exports.lockBatch = function(client, entity, callback) {
   const update = "UPDATE " + DB_STRUCTURE_NAMES.batchesTable + " " +
     "SET " +
-      "lastUpdate = " + entity.lastUpdate + "," +
+      "lastupdate = " + entity.lastupdate + "," +
       "status = " + quote(entity.status) + " " +
     "WHERE " +
       "status = 'open' AND " +
-      "batchId = " + quote(entity.batchId) + " AND " +
-      "s3Prefix = " + quote(entity.s3Prefix) +
+      "batchid = " + quote(entity.batchid) + " AND " +
+      "s3prefix = " + quote(entity.s3prefix) +
     "RETURNING entries";
 
   client.query(update, function (err, data) {
@@ -101,12 +168,12 @@ exports.lockBatch = function(client, entity, callback) {
 exports.unlockBatch = function(client, entity, callback) {
   const update = "UPDATE " + DB_STRUCTURE_NAMES.batchesTable + " " +
     "SET " +
-      "lastUpdate = " + entity.lastUpdate + "," +
+      "lastupdate = " + entity.lastupdate + "," +
       "status = " + quote(entity.status) + " " +
     "WHERE " +
       "(status = 'locked' OR status is 'error') AND " +
-      "batchId = " + quote(entity.batchId) + " AND " +
-      "s3Prefix = " + quote(entity.s3Prefix);
+      "batchid = " + quote(entity.batchid) + " AND " +
+      "s3prefix = " + quote(entity.s3prefix);
 
   client.query(update, function (err, data) {
     callWithFirstRow(callback, err, data);
@@ -117,12 +184,12 @@ exports.closeBatch = function(client, entity, callback) {
   const update =
     "UPDATE " + DB_STRUCTURE_NAMES.batchesTable + " " +
     "SET " +
-      "lastUpdate = " + entity.lastUpdate + "," +
+      "lastupdate = " + entity.lastupdate + "," +
       "status = " + quote(entity.status) + "," +
-      "errorMessage = " + entity.errorMessage ? quote(entity.errorMessage) : "null" +
+      "errormessage = " + entity.errormessage ? quote(entity.errormessage) : "null" +
     "WHERE " +
-      "batchId = " + quote(entity.batchId) + " AND " +
-      "s3Prefix = " + quote(entity.s3Prefix);
+      "batchid = " + quote(entity.batchid) + " AND " +
+      "s3prefix = " + quote(entity.s3prefix);
 
   client.query(update, callback)
 };
@@ -131,25 +198,36 @@ exports.changeLoadState = function (client, entity, callback) {
   const update =
     "UPDATE " + DB_STRUCTURE_NAMES.batchesTable + " " +
     "SET " +
-      "lastUpdate = " + entity.lastUpdate + "," +
-      "clusterLoadStatus = " + quote(entity.clusterLoadStatus) + "," +
-      "clusterLoadStatements = " + quote(entity.clusterLoadStatements) + " " +
+      "lastupdate = " + entity.lastupdate + "," +
+      "clusterloadstatus = " + quote(entity.clusterloadstatus) + "," +
+      "clusterloadstatements = " + quote(entity.clusterloadstatements) + " " +
     "WHERE " +
-      "batchId = " + quote(entity.batchId) + " AND " +
-      "s3Prefix = " + quote(entity.s3Prefix);
+      "batchid = " + quote(entity.batchid) + " AND " +
+      "s3prefix = " + quote(entity.s3prefix);
 
   client.query(update, callback)
 };
 
-exports.getBatch = function (client, batchId, s3Prefix, callback) {
+exports.getBatch = function (client, batchid, s3prefix, callback) {
   const select = "SELECT * FROM " + DB_STRUCTURE_NAMES.batchesTable + " " +
     "WHERE " +
-      "s3Prefix = " + quote(s3Prefix) + ", " +
-      "batchId = " + quote(batchId);
+      "s3prefix = " + quote(s3prefix) + " AND " +
+      "batchid = " + quote(batchid);
 
   client.query(select, function (err, data) {
     callback(err, unwrapFirstRow(data));
   });
+};
+
+exports.getBatches = function (client, status, lastupdate, callback) {
+  var select = "SELECT * FROM " + DB_STRUCTURE_NAMES.batchesTable + " " +
+    "WHERE status = " + quote(status);
+
+  if (lastupdate) {
+    select += " AND lastupdate >= " + lastupdate;
+  }
+
+  client.query(select, callback);
 };
 
 /*
@@ -157,24 +235,24 @@ exports.getBatch = function (client, batchId, s3Prefix, callback) {
 * Files *
 *********
 */
-exports.linkFileToBatch = function(client, file, batchId, callback) {
+exports.linkFileToBatch = function(client, file, batchid, callback) {
   const update =
     "UPDATE " + DB_STRUCTURE_NAMES.processedFilesTable + " " +
-    "SET batchId=" + quote(batchId) + " " +
-    "WHERE loadFile=" + quote(file);
+    "SET batchid=" + quote(batchid) + " " +
+    "WHERE loadfile=" + quote(file);
 
   client.query(update, callback);
 };
 
 exports.putFileEntry = function (client, filePath, callback) {
-  const insert = "INSERT INTO " + DB_STRUCTURE_NAMES.processedFilesTable + " (loadFile) VALUES (" + quote(filePath) + ")";
+  const insert = "INSERT INTO " + DB_STRUCTURE_NAMES.processedFilesTable + " (loadfile) VALUES (" + quote(filePath) + ")";
 
   client.query(insert, callback);
 };
 
 exports.getFile = function (client, filePath, callback) {
   const select = "SELECT * FROM " + DB_STRUCTURE_NAMES.processedFilesTable + " " +
-    "WHERE loadFile = " + quote(filePath);
+    "WHERE loadfile = " + quote(filePath);
 
   client.query(select, function (err, data) {
     callback(err, unwrapFirstRow(data));
@@ -183,7 +261,7 @@ exports.getFile = function (client, filePath, callback) {
 
 exports.deleteFile = function (client, filePath, callback) {
   const del = "DELETE FROM " + DB_STRUCTURE_NAMES.processedFilesTable + " " +
-    "WHERE loadFile = " + quote(filePath);
+    "WHERE loadfile = " + quote(filePath);
 
   client.query(del, callback);
 };
@@ -195,16 +273,18 @@ exports.deleteFile = function (client, filePath, callback) {
 */
 exports.putConfig = function (client, config, callback) {
   const insert =
-    "INSERT INTO " + DB_STRUCTURE_NAMES.configTable + " (s3Prefix, batchSize, batchTimeoutSecs, copyOptions, currentBatch, filenameFilterRegex, loadClusters, s3MountDir, version) " +
+    "INSERT INTO " + DB_STRUCTURE_NAMES.configTable + " (s3prefix, batchsize, batchtimeoutsecs, copyoptions, currentbatch, filenamefilterregex, loadclusters, s3mountdir, successtopicarn, failuretopicarn, version) " +
     "VALUES (" +
-      quote(config.s3Prefix) + "," +
-      config.batchSize + "," +
-      config.batchTimeoutSecs + "," +
-      quote(config.copyOptions) + "," +
-      quote(config.currentBatch) + "," +
-      quote(config.filenameFilterRegex) + "," +
-      quote(JSON.stringify(config.loadClusters)) + "," +
-      quote(config.s3MountDir) + "," +
+      quote(config.s3prefix) + "," +
+      config.batchsize + "," +
+      config.batchtimeoutsecs + "," +
+      quote(config.copyoptions) + "," +
+      quote(config.currentbatch) + "," +
+      quote(config.filenamefilterregex) + "," +
+      quote(JSON.stringify(config.loadclusters)) + "," +
+      quote(config.s3mountdir) + "," +
+      quote(config.successtopicarn) + "," +
+      quote(config.failuretopicarn) + "," +
       quote(config.version) + ")";
 
   client.query(insert, callback);
@@ -214,17 +294,17 @@ exports.allocateBatch = function (client, entity, callback) {
   const update =
     "UPDATE " + DB_STRUCTURE_NAMES.configTable + " " +
     "SET " +
-      "currentBatch=" + quote(entity.currentBatch) + ", " +
-      "lastBatchRotation=" + quote(entity.lastBatchRotation) + " " +
-    "WHERE s3Prefix=" + quote(entity.s3Prefix);
+      "currentbatch=" + quote(entity.currentbatch) + ", " +
+      "lastbatchrotation=" + quote(entity.lastbatchrotation) + " " +
+    "WHERE s3prefix=" + quote(entity.s3prefix);
 
   client.query(update, callback);
 };
 
-exports.getConfig = function (client, s3Prefix, callback) {
+exports.getConfig = function (client, s3prefix, callback) {
   const select =
     "SELECT * FROM " + DB_STRUCTURE_NAMES.configTable + " " +
-    "WHERE s3Prefix = " + quote(s3Prefix);
+    "WHERE s3prefix = " + quote(s3prefix);
 
   client.query(select, function (err, data) {
     callback(err, unwrapFirstRow(data));
@@ -240,11 +320,12 @@ exports.createTables = function (client, callback) {
   function handleCreateTableError(err) {
     if (err) {
       console.log(err.toString());
+      client.end();
       process.exit(ERROR);
     }
   }
 
-  console.log("Creating Tables in Dynamo DB if Required");
+  console.log("Creating Tables in Postgres if Required");
   client.query(DDL.TABLES.batches, function (err) {
     handleCreateTableError(err);
     client.query(DDL.TABLES.processedFiles, function (err) {
@@ -253,16 +334,19 @@ exports.createTables = function (client, callback) {
         handleCreateTableError(err);
         client.query(DDL.INDEXES.batches, function (err) {
           handleCreateTableError(err);
-          if (callback) {
-            setTimeout(callback(), 5000);
-          }
+          client.query(DDL.INDEXES.files, function (err) {
+            handleCreateTableError(err);
+            if (callback) {
+              callback();
+            }
+          });
         });
       });
     });
   });
 };
 
-exports.deleteTables = function (client, callback) {
+exports.dropTables = function (client, callback) {
   function handleDropTableError(err) {
     if (err && err.routine !== 'DropErrorMsgNonExistent') {
       console.log(err.toString());

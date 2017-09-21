@@ -25,7 +25,7 @@ var common = require('./common');
 var usage = function() {
 	console.log("You must provide an AWS Region Code, Batch ID, and configured Input Location to use Unlock.");
 	process.exit(ERROR);
-}
+};
 
 if (process.argv.length < 4) {
 	usage();
@@ -38,87 +38,52 @@ var prefix = process.argv[4];
 if (!thisBatchId || !prefix) {
 	usage();
 }
-var dynamoDB = new aws.DynamoDB({
-	apiVersion : '2012-08-10',
-	region : setRegion
-});
 
-var getConfig = {
-	Key : {
-		s3Prefix : {
-			S : prefix
-		}
-	},
-	TableName : configTable,
-	ConsistentRead : true
-};
+// connect to PostgreSQL
+var Persistence = require('./db/persistence');
+var postgresClient = require('./db/postgresConnector').connect();
 
-dynamoDB.getItem(getConfig, function(err, data) {
+function exit(code) {
+  postgresClient.end();
+  process.exit(code);
+}
+
+//TODO use getConfig
+Persistence.getConfig(postgresClient, prefix, function(err, data) {
 	if (err) {
 		console.log(err);
-		process.exit(ERROR);
+		exit(ERROR);
 	} else {
 		if (!data) {
 			console.log("Unable to find Configuration with S3 Prefix " + prefix + " in Region " + setRegion);
+			exit(ERROR);
 		} else {
 			// only allow unlocking if the batch is allocated as current
-			if (data.Item.currentBatch.S !== thisBatchId) {
+			if (data.currentbatch !== thisBatchId) {
 				console.log("Batch " + thisBatchId + " is not currently allocated as the open batch for Load Configuration on "
 						+ prefix + ". Use reprocessBatch.js to rerun the load of this Batch.");
-				process.exit(ERROR);
+				exit(ERROR);
 			} else {
 				var updateBatchStatus = {
-					Key : {
-						batchId : {
-							S : thisBatchId,
-						},
-						s3Prefix : {
-							S : prefix
-						}
-					},
-					TableName : batchTable,
-					AttributeUpdates : {
-						status : {
-							Action : 'PUT',
-							Value : {
-								S : 'open'
-							}
-						},
-						lastUpdate : {
-							Action : 'PUT',
-							Value : {
-								N : '' + common.now()
-							}
-						}
-					},
-					// the batch to be unlocked must be in locked or error state - we
-					// can't reopen
-					// 'complete' batches
-					Expected : {
-						status : {
-							AttributeValueList : [ {
-								S : 'locked'
-							}, {
-								S : 'error'
-							} ],
-							ComparisonOperator : 'IN'
-						}
-					}
+					batchid : thisBatchId,
+					s3prefix : prefix,
+					status : 'open',
+					lastupdate :  common.now()
 				};
 
-				dynamoDB.updateItem(updateBatchStatus, function(err, data) {
+				Persistence.unlockBatch(postgresClient, updateBatchStatus, function(err) {
 					if (err) {
 						if (err.code === conditionCheckFailed) {
 							console.log("Batch " + thisBatchId + " cannot be unlocked as it is not in 'locked' or 'error' status");
 						} else {
 							console.log(err);
-							process.exit(ERROR);
+							exit(ERROR);
 						}
 					} else {
 						console.log("Batch " + thisBatchId + " Unlocked and ready for reprocessing");
 					}
 
-					process.exit(OK);
+					exit(OK);
 				});
 			}
 		}

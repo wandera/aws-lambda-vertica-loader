@@ -29,11 +29,10 @@ var setRegion = process.argv[2];
 var thisBatchId = process.argv[3];
 var prefix = process.argv[4];
 
-// connect to dynamo db and s3
-var dynamoDB = new aws.DynamoDB({
-	apiVersion : '2012-08-10',
-	region : setRegion
-});
+// connect to PostgreSQL
+var Persistence = require('./db/persistence');
+var postgresClient = require('./db/postgresConnector').connect();
+
 var s3 = new aws.S3({
 	apiVersion : '2006-03-01',
 	region : setRegion
@@ -41,21 +40,18 @@ var s3 = new aws.S3({
 
 var batchEntries = undefined;
 
+function exit(code) {
+	postgresClient.end();
+	process.exit(code);
+}
+
 var processFile = function(index) {
 	// delete the processed file entry
-	var fileItem = {
-		Key : {
-			loadFile : {
-				S : batchEntries[index]
-			}
-		},
-		TableName : filesTable
-	};
-	dynamoDB.deleteItem(fileItem, function(err, data) {
+	Persistence.deleteFile(postgresClient, batchEntries[index], function(err) {
 		if (err) {
 			console.log(filesTable + " Delete Error");
 			console.log(err);
-			process.exit(ERROR);
+			exit(ERROR);
 		} else {
 			// issue a same source/target copy command to S3, which will cause
 			// Lambda to get a new event
@@ -66,10 +62,10 @@ var processFile = function(index) {
 				Key : fileKey,
 				CopySource : batchEntries[index]
 			};
-			s3.copyObject(copySpec, function(err, data) {
+			s3.copyObject(copySpec, function(err) {
 				if (err) {
 					console.log(err);
-					process.exit(ERROR);
+					exit(ERROR);
 				} else {
 					console.log("Submitted reprocess request for " + batchEntries[index]);
 
@@ -78,7 +74,7 @@ var processFile = function(index) {
 						processFile(index + 1);
 					} else {
 						console.log("Processed " + batchEntries.length + " Files");
-						process.exit(OK);
+						exit(OK);
 					}
 				}
 			});
@@ -86,32 +82,18 @@ var processFile = function(index) {
 	});
 };
 
-// fetch the batch
-var getBatch = {
-	Key : {
-		batchId : {
-			S : thisBatchId,
-		},
-		s3Prefix : {
-			S : prefix
-		}
-	},
-	TableName : batchTable,
-	ConsistentRead : true
-};
-
-dynamoDB.getItem(getBatch, function(err, data) {
+Persistence.getBatch(postgresClient, thisBatchId, prefix, function(err, data) {
 	if (err) {
 		console.log(err);
-		process.exit(ERROR);
+		exit(ERROR);
 	} else {
-		if (data && data.Item) {
-			if (data.Item.status.S === open) {
+		if (data) {
+			if (data.status === open) {
 				console.log("Cannot reprocess an Open Batch");
-				process.exit(error);
+				exit(ERROR);
 			} else {
 				// load the global batch entries so that we can process it in callbacks
-				batchEntries = data.Item.entries.SS;
+				batchEntries = data.entries;
 
 				// call processFile with 0 index to tell it to process the first item in
 				// the array
@@ -119,7 +101,7 @@ dynamoDB.getItem(getBatch, function(err, data) {
 			}
 		} else {
 			console.log("Unable to retrieve batch " + thisBatchId + " for prefix " + prefix);
-			process.exit(ERROR);
+			exit(ERROR);
 		}
 	}
 });

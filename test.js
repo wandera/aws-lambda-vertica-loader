@@ -60,7 +60,7 @@ function context() {}
 context.done = function(status, message) {
 	console.log("Context Closure Message: " + message);
 
-	if (status && status !== null) {
+	if (status) {
 		process.exit(-1);
 	} else {
 		process.exit(0);

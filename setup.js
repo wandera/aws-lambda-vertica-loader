@@ -33,27 +33,13 @@ require('./defaults_custom');
 var common = require('./common');
 var async = require('async');
 var uuid = require('node-uuid');
-var dynamoDB;
 var kmsCrypto = require('./kmsCrypto');
 var setRegion;
 
-dynamoConfig = {
-	TableName : configTable,
-	Item : {
-		currentBatch : {
-			S : uuid.v4()
-		},
-		version : {
-			S : pjson.version
-		},
-		loadClusters : {
-			L : [ {
-				M : {
-
-				}
-			} ]
-		}
-	}
+configDefinition = {
+	currentbatch :  uuid.v4(),
+	version : pjson.version,
+	loadclusters : [{}]
 };
 
 /* configuration of question prompts and config assignment */
@@ -61,6 +47,18 @@ var rl = readline.createInterface({
 	input : process.stdin,
 	output : process.stdout
 });
+
+// connect to PostgreSQL
+var postgresClient = require('./db/postgresConnector').connect();
+
+const releaseConnection = function () {
+  if (postgresClient) {
+    postgresClient.end();
+  }
+};
+
+process.on('SIGINT', releaseConnection);
+process.on('SIGTERM', releaseConnection);
 
 var qs = [];
 
@@ -76,12 +74,6 @@ q_region = function(callback) {
 					.toLowerCase(), rl);
 
 			setRegion = answer.toLowerCase();
-
-			// configure dynamo db and kms for the correct region
-			dynamoDB = new aws.DynamoDB({
-				apiVersion : '2012-08-10',
-				region : setRegion
-			});
 			kmsCrypto.setRegion(setRegion);
 
 			callback(null);
@@ -111,9 +103,7 @@ q_s3Prefix = function(callback) {
 			setPrefix = stripped.replace(/\/$/, '');
 		}
 
-		dynamoConfig.Item.s3Prefix = {
-			S : setPrefix
-		};
+		configDefinition.s3prefix = setPrefix;
 
 		callback(null);
 	});
@@ -124,9 +114,7 @@ q_s3MountDir = function(callback) {
                 if (common.blank(answer) === null) {
                         answer = dfltS3MountDir ;
                 }
-                dynamoConfig.Item.s3MountDir = {
-                        S : answer
-                };
+                configDefinition.s3mountdir = answer;
                 callback(null);
         });
 };
@@ -139,9 +127,7 @@ q_filenameFilter = function(callback) {
 		// replace double \\ with single
 		answer = answer.replace("\\\\","\\") ;
 		if (common.blank(answer) !== null) {
-			dynamoConfig.Item.filenameFilterRegex = {
-				S : answer
-			};
+			configDefinition.filenamefilterregex = answer;
 		}
 		callback(null);
 	});
@@ -154,9 +140,7 @@ q_clusterEndpoint = function(callback) {
                 }
 		common.validateNotNull(answer, 'You Must Provide a Vertica Cluster Endpoint',
 				rl);
-		dynamoConfig.Item.loadClusters.L[0].M.clusterEndpoint = {
-			S : answer
-		};
+		configDefinition.loadclusters[0].clusterEndpoint = answer;
 		callback(null);
 	});
 };
@@ -166,9 +150,7 @@ q_clusterPort = function(callback) {
                 if (common.blank(answer) === null) {
                         answer = dfltClusterPort ;
                 }
-		dynamoConfig.Item.loadClusters.L[0].M.clusterPort = {
-			N : '' + common.getIntValue(answer, rl)
-		};
+		configDefinition.loadclusters[0].clusterPort = common.getIntValue(answer, rl);
 		callback(null);
 	});
 };
@@ -179,9 +161,7 @@ q_userName = function(callback) {
                         answer = dfltUserName ;
                 }
 		common.validateNotNull(answer, 'You Must Provide a Username', rl);
-		dynamoConfig.Item.loadClusters.L[0].M.connectUser = {
-			S : answer
-		};
+		configDefinition.loadclusters[0].connectUser = answer;
 		callback(null);
 	});
 };
@@ -193,9 +173,7 @@ q_userPwd = function(callback) {
                 }
 		common.validateNotNull(answer, 'You Must Provide a Password', rl);
 		kmsCrypto.encrypt(answer, function(err, ciphertext) {
-			dynamoConfig.Item.loadClusters.L[0].M.connectPassword = {
-				S : kmsCrypto.toLambdaStringFormat(ciphertext)
-			};
+			configDefinition.loadclusters[0].connectPassword = kmsCrypto.toLambdaStringFormat(ciphertext);
 			callback(null);
 		});
 	});
@@ -209,9 +187,7 @@ q_table = function(callback) {
                         answer = dfltTable ;
                 }
 		common.validateNotNull(answer, 'You Must Provide a Table Name', rl);
-		dynamoConfig.Item.loadClusters.L[0].M.targetTable = {
-			S : answer
-		};
+		configDefinition.loadclusters[0].targetTable = answer;
 		callback(null);
 	});
 };
@@ -222,9 +198,7 @@ q_copyOptions = function(callback) {
                         answer = dfltCopyOptions ;
                 }
 		if (common.blank(answer) !== null) {
-			dynamoConfig.Item.copyOptions = {
-				S : answer
-			};
+			configDefinition.copyoptions = answer;
 		}
 		callback(null);
 	});
@@ -237,40 +211,34 @@ q_columns = function(callback) {
       answer = dfltColumns;
     }
     if (common.blank(answer) !== null) {
-      dynamoConfig.Item.loadClusters.L[0].M.copyColumns = {
-        S : answer
-      };
+      configDefinition.loadclusters[0].copyColumns = answer;
     }
     callback(null);
   });
 };
 
 q_preLoadStatement = function(callback) {
-	rl.question('Enter SQL statement to run before the load [' + dfltPreLoadStatement + ']> ', function(answer) {
-                if (common.blank(answer) === null) {
-                        answer = dfltPreLoadStatement ;
-                }
-                if (common.blank(answer) !== null) {
-			dynamoConfig.Item.loadClusters.L[0].M.preLoadStatement = {
-				S : answer
-			};
-      		}
+  rl.question('Enter SQL statement to run before the load [' + dfltPreLoadStatement + ']> ', function (answer) {
+    if (common.blank(answer) === null) {
+      answer = dfltPreLoadStatement;
+    }
+    if (common.blank(answer) !== null) {
+      configDefinition.loadclusters[0].preLoadStatement = answer;
+    }
 		callback(null);
 	});
 };
 
-q_postLoadStatement = function(callback) {
-	rl.question('Enter SQL statement to run after the load [' + dfltPostLoadStatement + ']> ', function(answer) {
-                if (common.blank(answer) === null) {
-                        answer = dfltPostLoadStatement ;
-                }
-                if (common.blank(answer) !== null) {
-			dynamoConfig.Item.loadClusters.L[0].M.postLoadStatement = {
-				S : answer
-			};
-       		}
-		callback(null);
-	});
+q_postLoadStatement = function (callback) {
+  rl.question('Enter SQL statement to run after the load [' + dfltPostLoadStatement + ']> ', function (answer) {
+    if (common.blank(answer) === null) {
+      answer = dfltPostLoadStatement;
+    }
+    if (common.blank(answer) !== null) {
+      configDefinition.loadclusters[0].postLoadStatement = answer;
+    }
+    callback(null);
+  });
 };
 
 
@@ -280,9 +248,7 @@ q_batchSize = function(callback) {
                         answer = dfltBatchSize ;
                 }
 		if (common.blank(answer) !== null) {
-			dynamoConfig.Item.batchSize = {
-				N : '' + common.getIntValue(answer, rl)
-			};
+			configDefinition.batchsize =  common.getIntValue(answer, rl);
 		}
 		callback(null);
 	});
@@ -294,9 +260,7 @@ q_batchTimeoutSecs = function(callback) {
                         answer = dfltBatchTimeoutSecs ;
                 }
 		if (common.blank(answer) !== null) {
-			dynamoConfig.Item.batchTimeoutSecs = {
-				N : '' + common.getIntValue(answer, rl)
-			};
+			configDefinition.batchtimeoutsecs = common.getIntValue(answer, rl);
 		}
 		callback(null);
 	});
@@ -308,9 +272,7 @@ q_successTopic = function(callback) {
                         answer = dfltSuccessTopic ;
                 }
 		if (common.blank(answer) !== null) {
-			dynamoConfig.Item.successTopicARN = {
-				S : answer
-			};
+			configDefinition.successtopicarn = answer;
 		}
 		callback(null);
 	});
@@ -322,9 +284,7 @@ q_failureTopic = function(callback) {
                         answer = dfltFailureTopic ;
                 }
 		if (common.blank(answer) !== null) {
-			dynamoConfig.Item.failureTopicARN = {
-				S : answer
-			};
+			configDefinition.failuretopicarn = answer;
 		}
 		callback(null);
 	});
@@ -343,11 +303,16 @@ setup = function(overrideConfig, callback) {
 	if (overrideConfig) {
 		useConfig = overrideConfig;
 	} else {
-		useConfig = dynamoConfig;
+		useConfig = configDefinition;
 	}
-	var configWriter = common.writeConfig(setRegion, dynamoDB, useConfig,
-			callback);
-	common.createTables(dynamoDB, configWriter);
+
+	var innerCallback = function(err) {
+		postgresClient.end();
+		callback(err);
+	};
+
+	var configWriter = common.writeConfig(setRegion, postgresClient, useConfig, innerCallback);
+	common.createTables(postgresClient, configWriter);
 };
 // export the setup module so that customers can programmatically add new
 // configurations
