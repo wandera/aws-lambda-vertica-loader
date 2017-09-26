@@ -816,7 +816,7 @@ exports.handler =
 							};
 
 							console.info("Opening connection to Postgres DB");
-              postgresClient = require('./db/postgresConnector').connect();
+							postgresClient = require('./db/postgresConnector').connect();
 
 							inputInfo.bucket = r.s3.bucket.name;
 							inputInfo.key = decodeURIComponent(r.s3.object.key);

@@ -36,7 +36,7 @@ var uuid = require('node-uuid');
 var kmsCrypto = require('./kmsCrypto');
 var setRegion;
 
-configDefinition = {
+const configDefinition = {
 	currentbatch :  uuid.v4(),
 	version : pjson.version,
 	loadclusters : [{}]
@@ -63,7 +63,7 @@ process.on('SIGTERM', releaseConnection);
 var qs = [];
 
 const q_dbHost = function(callback) {
-  rl.question('Enter the Postgres database host > ', function( answer) {
+  rl.question('Enter the Postgres database host [Reqd.] > ', function( answer) {
     common.validateNotNull(answer, 'You must provide the database host', rl);
     process.env.postgres_host = answer;
     callback(null);
@@ -81,7 +81,7 @@ const q_dbPort = function(callback) {
 };
 
 const q_dbName = function(callback) {
-  rl.question('Enter the Postgres database name > ', function( answer) {
+  rl.question('Enter the Postgres database name [Reqd.] > ', function( answer) {
     common.validateNotNull(answer, 'You must provide the database name', rl);
     process.env.postgres_database = answer;
     callback(null);
@@ -89,7 +89,7 @@ const q_dbName = function(callback) {
 };
 
 const q_dbUser = function(callback) {
-  rl.question('Enter the Postgres database username > ', function( answer) {
+  rl.question('Enter the Postgres database username [Reqd.] > ', function( answer) {
     common.validateNotNull(answer, 'You must provide the database username', rl);
     process.env.postgres_user = answer;
     callback(null);
@@ -97,7 +97,7 @@ const q_dbUser = function(callback) {
 };
 
 const q_dbPasswd = function(callback) {
-  rl.question('Enter the Postgres database password for user ' + process.env.postgres_user + ' > ', function( answer) {
+  rl.question('Enter the Postgres database password for user ' + process.env.postgres_user + ' [Reqd.] > ', function( answer) {
     common.validateNotNull(answer, 'You must provide the database password', rl);
     process.env.postgres_password = answer;
     callback(null);
@@ -341,7 +341,7 @@ const last = function(callback) {
 
 const setup = function(overrideConfig, callback) {
 	// set which configuration to use
-  postgresClient = require('./db/postgresConnector').connect();
+	postgresClient = require('./db/postgresConnector').connect();
 	var useConfig = undefined;
 	if (overrideConfig) {
 		useConfig = overrideConfig;
@@ -349,8 +349,8 @@ const setup = function(overrideConfig, callback) {
 		useConfig = configDefinition;
 	}
 
-	var innerCallback = function(err) {
-		console.log("Closing db connection");
+	var innerCallback = function (err) {
+		console.info("Closing db connection");
 		postgresClient.end();
 		callback(err);
 	};
