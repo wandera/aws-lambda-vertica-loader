@@ -18,10 +18,10 @@
  */
 
 
-batchId = 'batchId';
-currentBatch = 'currentBatch';
-s3prefix = 's3Prefix';
-lastUpdate = 'lastUpdate';
+batchid = 'batchid';
+currentbatch = 'currentbatch';
+s3prefix = 's3prefix';
+lastupdate = 'lastupdate';
 complete = 'complete';
 locked = 'locked';
 open = 'open';
@@ -45,6 +45,7 @@ dfltS3MountDir = 's3://';
 dfltFilenameFilter = '.*\\.csv';
 dfltClusterEndpoint = REQD_BLANK ;
 dfltClusterPort = '5433';
+dfltPostgresPort = '5432';
 dfltUserName = REQD_BLANK ;
 dfltUserPwd = REQD_BLANK ;
 dfltTable = REQD_BLANK ;

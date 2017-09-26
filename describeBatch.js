@@ -25,39 +25,29 @@ if (process.argv.length < 4) {
 	console.log("You must provide an AWS Region Code, Batch ID, and configured Input Location");
 	process.exit(ERROR);
 }
-var setRegion = process.argv[2];
 var thisBatchId = process.argv[3];
 var prefix = process.argv[4];
 
-var dynamoDB = new aws.DynamoDB({
-	apiVersion : '2012-08-10',
-	region : setRegion
-});
+// connect to PostgreSQL
+var Persistence = require('./db/persistence');
+var postgresClient = require('./db/postgresConnector').connect();
 
-var getBatch = {
-	Key : {
-		batchId : {
-			S : thisBatchId,
-		},
-		s3Prefix : {
-			S : prefix
-		}
-	},
-	TableName : batchTable,
-	ConsistentRead : true
-};
+function exit(code) {
+  postgresClient.end();
+  process.exit(code);
+}
 
-dynamoDB.getItem(getBatch, function(err, data) {
+Persistence.getBatch(postgresClient, thisBatchId, prefix, function(err, data) {
 	if (err) {
 		console.log(err);
-		process.exit(ERROR);
+		exit(ERROR);
 	} else {
-		if (data && data.Item) {
-			console.log(JSON.stringify(data.Item));
+		if (data) {
+			console.log(JSON.stringify(data));
 		} else {
-			console.log("No Batch " + thisBatchId + " found in " + setRegion);
+			console.log("No Batch " + thisBatchId + " found");
 		}
 	}
 
-	process.exit(OK);
+	exit(OK);
 });
