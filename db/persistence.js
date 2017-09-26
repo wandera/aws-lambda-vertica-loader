@@ -19,7 +19,7 @@ const DDL = {
       'PRIMARY KEY(s3prefix, batchid))',
     processedFiles:
       'CREATE TABLE ' + DB_STRUCTURE_NAMES.processedFilesTable + ' (' +
-      'loadfile VARCHAR(300),' +
+      'loadfile VARCHAR(300) PRIMARY KEY,' +
       'batchid VARCHAR(36))',
     config:
       'CREATE TABLE ' + DB_STRUCTURE_NAMES.configTable + ' (' +
@@ -39,13 +39,18 @@ const DDL = {
   },
   INDEXES: {
     // This index is needed for queryBatches.js script
-    batches: 'CREATE INDEX ON ' + DB_STRUCTURE_NAMES.batchesIndex + ' (status, lastupdate)',
-    files: 'CREATE INDEX ON ' + DB_STRUCTURE_NAMES.processedFilesTable + ' (loadfile)'
+    batches: 'CREATE INDEX ON ' + DB_STRUCTURE_NAMES.batchesIndex + ' (status, lastupdate)'
   }
+};
+
+const POSTGRES_ERROR = {
+  DUPLICATED_KEY: '23505',
+  TRANSACTION_CLASH: '40001'
 };
 
 function quote(value) {
   if (value) {
+    value = value.replace(/'/g, "''");
     return "'" + value + "'";
   } else {
     return null;
@@ -53,7 +58,7 @@ function quote(value) {
 }
 
 function unwrapFirstRow(data) {
-  if (data.rowCount !== 0) {
+  if (data && data.rowCount !== 0) {
     return data.rows[0];
   }
 }
@@ -81,7 +86,7 @@ exports.updateBatch = function(client, entity, callback) {
   const update =
     "UPDATE " + DB_STRUCTURE_NAMES.batchesTable + " " +
     "SET " +
-      "entries = array_agg(DISTINCT array_append(entries, " + quote(entity.entry) + "))," +
+      "entries = CASE WHEN NOT(entries::varchar[] @> ARRAY[" + quote(entity.entry) + "]::varchar[]) THEN array_append(entries, " + quote(entity.entry) + ") ELSE entries END," +
       "lastupdate = " + entity.lastupdate + "," +
       "status = " + quote(entity.status) + " " +
     "WHERE " +
@@ -95,11 +100,13 @@ exports.updateBatch = function(client, entity, callback) {
     entity.lastupdate + "," +
     quote(entity.status) + ")";
 
-
   function finishWithError(error) {
     client.query("ROLLBACK", function(err) {
       if (err) {
         console.log(err);
+      }
+      if (error.code === POSTGRES_ERROR.DUPLICATED_KEY || error.code === POSTGRES_ERROR.TRANSACTION_CLASH) {
+        error.code = conditionCheckFailed;
       }
       callback(error);
     });
@@ -119,7 +126,7 @@ exports.updateBatch = function(client, entity, callback) {
     }
   }
 
-  client.query("BEGIN", function(err) {
+  client.query("BEGIN ISOLATION LEVEL SERIALIZABLE", function(err) {
     if (!err) {
       client.query(select, function(err, data) {
         if(!err) {
@@ -157,11 +164,33 @@ exports.lockBatch = function(client, entity, callback) {
     "WHERE " +
       "status = 'open' AND " +
       "batchid = " + quote(entity.batchid) + " AND " +
-      "s3prefix = " + quote(entity.s3prefix) +
+      "s3prefix = " + quote(entity.s3prefix) + " " +
     "RETURNING entries";
 
-  client.query(update, function (err, data) {
-    callWithFirstRow(callback, err, data);
+  function transformError(err) {
+    if (err && err.code === POSTGRES_ERROR.TRANSACTION_CLASH) {
+      console.info("Someone else just locked the batch. No need to worry then.");
+      err.code = conditionCheckFailed;
+    }
+    return err;
+  }
+
+  client.query("BEGIN ISOLATION LEVEL SERIALIZABLE", function (err) {
+    if (!err) {
+      client.query(update, function (err, data) {
+        if (!err) {
+          client.query("COMMIT", function (err) {
+            callWithFirstRow(callback, transformError(err), data);
+          });
+        } else {
+          client.query("ROLLBACK", function () {
+            callback(transformError(err));
+          })
+        }
+      });
+    } else {
+      callback(err);
+    }
   });
 };
 
@@ -186,7 +215,7 @@ exports.closeBatch = function(client, entity, callback) {
     "SET " +
       "lastupdate = " + entity.lastupdate + "," +
       "status = " + quote(entity.status) + "," +
-      "errormessage = " + entity.errormessage ? quote(entity.errormessage) : "null" +
+      "errormessage = " + (entity.errormessage ? quote(entity.errormessage) : "null") + " " +
     "WHERE " +
       "batchid = " + quote(entity.batchid) + " AND " +
       "s3prefix = " + quote(entity.s3prefix);
@@ -226,7 +255,6 @@ exports.getBatches = function (client, status, lastupdate, callback) {
   if (lastupdate) {
     select += " AND lastupdate >= " + lastupdate;
   }
-
   client.query(select, callback);
 };
 
@@ -295,7 +323,7 @@ exports.allocateBatch = function (client, entity, callback) {
     "UPDATE " + DB_STRUCTURE_NAMES.configTable + " " +
     "SET " +
       "currentbatch=" + quote(entity.currentbatch) + ", " +
-      "lastbatchrotation=" + quote(entity.lastbatchrotation) + " " +
+      "lastbatchrotation=" + entity.lastbatchrotation + " " +
     "WHERE s3prefix=" + quote(entity.s3prefix);
 
   client.query(update, callback);
@@ -319,13 +347,13 @@ exports.getConfig = function (client, s3prefix, callback) {
 exports.createTables = function (client, callback) {
   function handleCreateTableError(err) {
     if (err) {
-      console.log(err.toString());
+      console.error(err.toString());
       client.end();
       process.exit(ERROR);
     }
   }
 
-  console.log("Creating Tables in Postgres if Required");
+  console.info("Creating Tables in Postgres if Required");
   client.query(DDL.TABLES.batches, function (err) {
     handleCreateTableError(err);
     client.query(DDL.TABLES.processedFiles, function (err) {
@@ -334,12 +362,9 @@ exports.createTables = function (client, callback) {
         handleCreateTableError(err);
         client.query(DDL.INDEXES.batches, function (err) {
           handleCreateTableError(err);
-          client.query(DDL.INDEXES.files, function (err) {
-            handleCreateTableError(err);
-            if (callback) {
-              callback();
-            }
-          });
+          if (callback) {
+            callback();
+          }
         });
       });
     });
@@ -349,7 +374,7 @@ exports.createTables = function (client, callback) {
 exports.dropTables = function (client, callback) {
   function handleDropTableError(err) {
     if (err && err.routine !== 'DropErrorMsgNonExistent') {
-      console.log(err.toString());
+      console.error(err.toString());
       process.exit(ERROR);
     }
   }
@@ -360,7 +385,7 @@ exports.dropTables = function (client, callback) {
       handleDropTableError(err);
       client.query('DROP TABLE ' + DB_STRUCTURE_NAMES.configTable, function (err) {
         handleDropTableError(err);
-        console.log("All Configuration Tables Dropped");
+        console.info("All Configuration Tables Dropped");
         if (callback) {
           callback();
         }

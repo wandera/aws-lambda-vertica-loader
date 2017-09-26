@@ -45,6 +45,7 @@ dfltS3MountDir = 's3://';
 dfltFilenameFilter = '.*\\.csv';
 dfltClusterEndpoint = REQD_BLANK ;
 dfltClusterPort = '5433';
+dfltPostgresPort = '5432';
 dfltUserName = REQD_BLANK ;
 dfltUserPwd = REQD_BLANK ;
 dfltTable = REQD_BLANK ;

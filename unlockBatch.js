@@ -48,7 +48,6 @@ function exit(code) {
   process.exit(code);
 }
 
-//TODO use getConfig
 Persistence.getConfig(postgresClient, prefix, function(err, data) {
 	if (err) {
 		console.log(err);

@@ -44,16 +44,16 @@ var async = require('async');
 var uuid = require('node-uuid');
 var vertica = require('vertica');
 var Persistence = require('./db/persistence');
-var postgresClient = require('./db/postgresConnector').connect();
+var postgresClient;
 
-const releaseConnection = function () {
+function done(context, error, msg) {
   if (postgresClient) {
+    console.info("Closing connection to Postgres DB");
     postgresClient.end();
   }
-};
 
-process.on('SIGINT', releaseConnection);
-process.on('SIGTERM', releaseConnection);
+  context.done(error, msg);
+}
 
 // main function for AWS Lambda
 exports.handler =
@@ -63,21 +63,21 @@ exports.handler =
 			exports.foundConfig =
 					function(s3Info, err, data) {
 						if (err) {
-							console.log(err);
+							console.error(err);
 							var msg = 'Error getting Vertica Configuration for ' + s3Info.prefix + ' from Postgres ';
-							console.log(msg);
-							context.done(error, msg);
+							console.error(msg);
+							done(context, error, msg);
 						}
 
 						if (!data) {
 							// finish with no exception - where this file sits
 							// in the S3
 							// structure is not configured for loads
-							console.log("No Configuration Found for " + s3Info.prefix);
+							console.warn("No Configuration Found for " + s3Info.prefix);
 
-							context.done(null, null);
+							done(context, null, null);
 						} else {
-							console.log("Found Vertica Load Configuration for " + s3Info.prefix);
+							console.info("Found Vertica Load Configuration for " + s3Info.prefix);
 
 							var config = data;
 							var thisBatchId = config.currentbatch;
@@ -85,7 +85,7 @@ exports.handler =
 								if (s3Info.key.match(config.filenamefilterregex)) {
 									exports.checkFileProcessed(config, thisBatchId, s3Info);
 								} else {
-									console.log('Object ' + s3Info.key + ' excluded by filename filter \''
+									console.info('Object ' + s3Info.key + ' excluded by filename filter \''
 											+ config.filenamefilterregex + '\'');
 
 									// scan the current batch to decide
@@ -115,12 +115,12 @@ exports.handler =
 						// the conditional check failed so the file has already
 						// been
 						// processed
-						console.log("File " + itemEntry + " Already Processed");
-						context.done(null, null);
+						console.info("File " + itemEntry + " Already Processed");
+						done(context, null, null);
 					} else {
 						if (!data) {
 							var msg = "Idempotency Check on " + itemEntry + " failed";
-							console.log(msg);
+							console.info(msg);
 							exports.failBatch(msg, config, thisBatchId, s3Info, undefined);
 						} else {
 							// add was OK - proceed with adding the entry to the
@@ -138,7 +138,7 @@ exports.handler =
 			 */
 			exports.addFileToPendingBatch =
 					function(config, thisBatchId, s3Info, itemEntry) {
-						console.log("Adding Pending Batch Entry for " + itemEntry);
+						console.info("Adding Pending Batch Entry for " + itemEntry);
 
 						var proceed = false;
 						var asyncError = undefined;
@@ -177,7 +177,7 @@ exports.handler =
 														 */
 														Persistence.getConfig(postgresClient, s3Info.prefix, function(err, data) {
 															if (err) {
-																console.log(err);
+																console.error(err);
 																callback(err);
 															} else {
 																/*
@@ -190,15 +190,16 @@ exports.handler =
 																 * we've not set proceed to true, so async will
 																 * retry
 																 */
-																console.log("Reload of Configuration Complete after attempting Locked Batch Write");
+																console.info("Reload of Configuration Complete after attempting Locked Batch Write");
 
 																/*
-																 * we can call into the callback immediately, as
+																 * we can call into the callback with some random delay, as
 																 * we probably just missed the pending batch
 																 * processor's rotate of the configuration batch
 																 * ID
 																 */
-																callback();
+																const waitTimeout = Math.random() * 300;
+																setTimeout(callback, waitTimeout);
 															}
 														});
 													} else {
@@ -219,16 +220,16 @@ exports.handler =
 										function(err) {
 											if (err) {
 												// throw presented errors
-												console.log(err);
-												context.done(error, err);
+												console.error(err);
+												done(context, error, err);
 											} else {
 												if (asyncError) {
 													/*
 													 * throw errors which were encountered during the
 													 * async calls
 													 */
-													console.log(asyncError);
-													context.done(error, asyncError);
+													console.error(asyncError);
+													done(context, error, asyncError);
 												} else {
 													if (!proceed) {
 														/*
@@ -248,14 +249,16 @@ exports.handler =
 																		+ " which may be stuck in '"
 																		+ locked
 																		+ "' state. If so, unlock the back using `node unlockBatch.js <batch ID>`, delete the processed file marker with `node processedFiles.js -d <filename>`, and then re-store the file in S3";
-														console.log(e);
-														exports.sendSNS(config.failuretopicarn,
-																"Lambda Vertica Loader unable to write to Open Pending Batch", e, function() {
-																	context.done(error, e);
+														console.error(e);
+														if (config.failuretopicarn) {
+																exports.sendSNS(config.failuretopicarn,
+																	"Lambda Vertica Loader unable to write to Open Pending Batch", e, function() {
+																	done(context, error, e);
 																}, function(err) {
-																	console.log(err);
-																	context.done(error, "Unable to Send SNS Notification");
-																});
+																	console.error(err);
+																	done(context, error, "Unable to Send SNS Notification");
+														 		});
+														}
 													} else {
 														// the add of the file was successful, so we
 														exports.linkProcessedFileToBatch(itemEntry, thisBatchId);
@@ -278,7 +281,7 @@ exports.handler =
 					// process flow, we'll just log the error and do nothing with the OK
 					// response
 					if (err) {
-						console.log(err);
+						console.error(err);
 					}
 				});
 			};
@@ -293,12 +296,12 @@ exports.handler =
 						Persistence.getBatch(postgresClient, thisBatchId, s3Info.prefix,
 								function(err, data) {
 									if (err) {
-										console.log(err);
-										context.done(error, err);
+										console.error(err);
+										done(context, error, err);
 									} else if (!data) {
 										var msg = "No open pending Batch " + thisBatchId;
-										console.log(msg);
-										context.done(null, msg);
+										console.info(msg);
+										done(context, null, msg);
 									} else {
 										// check whether the current batch is bigger than the
 										// configured max size, or older than configured max age
@@ -306,14 +309,14 @@ exports.handler =
 										var pendingEntries = data.entries;
 										var doProcessBatch = false;
 										if (pendingEntries.length >= parseInt(config.batchsize)) {
-											console.log("Batch Size " + config.batchsize + " reached");
+											console.info("Batch Size " + config.batchsize + " reached");
 											doProcessBatch = true;
 										}
 
 										if (config.batchtimeoutsecs) {
 											if (common.now() - lastupdateTime > parseInt(config.batchtimeoutsecs)
 													&& pendingEntries.length > 0) {
-												console.log("Batch Size " + config.batchsize + " not reached but reached Age "
+												console.info("Batch Size " + config.batchsize + " not reached but reached Age "
 														+ config.batchtimeoutsecs + " seconds");
 												doProcessBatch = true;
 											}
@@ -334,21 +337,21 @@ exports.handler =
 														 * some other Lambda function has locked the batch -
 														 * this is OK and we'll just exit quietly
 														 */
-														context.done(null, null);
+														done(context, null, null);
 													} else {
-														console.log("Unable to lock Batch " + thisBatchId);
-														context.done(error, err);
+														console.error("Unable to lock Batch " + thisBatchId);
+														done(context, error, err);
 													}
 												} else {
 													if (!data) {
 														var e = "Unable to extract latest pending entries set from Locked batch";
-														console.log(e);
-														context.done(error, e);
+														console.error(e);
+														done(context, error, e);
 													} else {
 														/*
 														 * grab the pending entries from the locked batch
 														 */
-														pendingEntries = data;
+														pendingEntries = data.entries;
 
 														/*
 														 * assign the loaded configuration a new batch ID
@@ -361,9 +364,9 @@ exports.handler =
 
 														Persistence.allocateBatch(postgresClient, allocateNewBatchRequest, function(err) {
 															if (err) {
-																console.log("Error while allocating new Pending Batch ID");
-																console.log(err);
-																context.done(error, err);
+																console.error("Error while allocating new Pending Batch ID");
+																console.error(err);
+																done(context, error, err);
 															} else {
 																// OK - let's create the load config
 																exports.createLoadConfig(config, thisBatchId, s3Info, pendingEntries);
@@ -373,8 +376,8 @@ exports.handler =
 												}
 											});
 										} else {
-											console.log("No pending batch flush required");
-											context.done(null, null);
+											console.info("No pending batch flush required");
+											done(context, null, null);
 										}
 									}
 								});
@@ -385,7 +388,7 @@ exports.handler =
 			 */
 			exports.createLoadConfig =
 					function(config, thisBatchId, s3Info, batchEntries) {
-						console.log("Creating Load configuration for Batch " + thisBatchId);
+						console.info("Creating Load configuration for Batch " + thisBatchId);
 
 						// create list of file paths for Vertica COPY
 						var copyPathList = "";
@@ -414,7 +417,7 @@ exports.handler =
 					clustersToLoad[clustersToLoad.length] = config.loadclusters[i];
 				}
 
-				console.log("Loading " + clustersToLoad.length + " Clusters");
+				console.info("Loading " + clustersToLoad.length + " Clusters");
 
 				// run all the cluster loaders in parallel
 				async.map(clustersToLoad, function(item, callback) {
@@ -423,7 +426,7 @@ exports.handler =
 					exports.loadCluster(config, thisBatchId, s3Info, copyPathList, item, callback);
 				}, function(err, results) {
 					if (err) {
-						console.log(err);
+						console.error(err);
 					}
 
 					// go through all the results - if they were all OK,
@@ -436,7 +439,7 @@ exports.handler =
 						if (!results[i] || results[i].status === ERROR) {
 							var allOK = false;
 							
-							console.log("Cluster Load Failure " + results[i].error + " on Cluster " + results[i].cluster);
+							console.error("Cluster Load Failure " + results[i].error + " on Cluster " + results[i].cluster);
 						} 
 						// log the response state for each cluster
 						loadState[results[i].cluster] = {
@@ -460,7 +463,7 @@ exports.handler =
 
 					Persistence.changeLoadState(postgresClient, loadStateRequest, function(err) {
 						if (err) {
-							console.log("Error while attaching per-Cluster Load State");
+							console.error("Error while attaching per-Cluster Load State");
 							exports.failBatch(err, config, thisBatchId, s3Info, loadStatements);
 						} else {
 							if (allOK === true) {
@@ -485,7 +488,7 @@ exports.handler =
           var chainTail = Promise.resolve();
 
           statements.forEach(function (statement) {
-          	console.log("Chaining statement ", statement);
+          	console.info("Chaining statement ", statement);
             var newPromise = new Promise(function (resolve, reject) {
               client.query(statement, function (err, result) {
                 err ? reject(err) : resolve(result);
@@ -532,13 +535,13 @@ exports.handler =
 								copyCommand += 'source S3(url=\'' + copyPathList + '\')';
 
 								// add optional copy options
-								if (!config.copyoptions) {
+								if (config.copyoptions) {
 									copyCommand = copyCommand + ' ' + config.copyoptions + '\n';
 								}
 
 
 								// build the connection string
-								console.log("Connecting to Vertica Database " + clusterInfo.clusterEndpoint + ":" + clusterInfo.clusterPort);
+								console.info("Connecting to Vertica Database " + clusterInfo.clusterEndpoint + ":" + clusterInfo.clusterPort);
 								var dbConnectArgs = {
 									host: clusterInfo.clusterEndpoint,
 									port: clusterInfo.clusterPort,
@@ -558,26 +561,26 @@ exports.handler =
 											cluster : clusterInfo.clusterEndpoint
 										});
 									} else {
-										console.log("Connected") ;
+										console.info("Connected") ;
 										var preLoad = "" ;
 										var load = "" ;
 										var postLoad = "" ;
 										// Run preLoad Statement, if defined - failure will not affect batch state
 										if (clusterInfo.preLoadStatement !== undefined) {
 											var statement = clusterInfo.preLoadStatement ;
-											console.log("Execute preLoadStatement: " + statement) ;
+											console.info("Execute preLoadStatement: " + statement) ;
 											client.query(statement, function(err, result) {
 												if (err) {
-													console.log("preLoadStatement: Failed");
+													console.error("preLoadStatement: Failed");
 													preLoad = "Failed: " + statement ;
 												} else {
-													console.log("preLoadStatement: Success");
+													console.info("preLoadStatement: Success");
 													preLoad = "Success: " + statement ;
 												}
 											}) ;
 										}
 										// Run Load statement
-										console.log("Execute load statement: " + copyCommand) ;
+										console.info("Execute load statement: " + copyCommand) ;
 										var statements = [
 											"ALTER SESSION SET UDPARAMETER FOR awslib aws_id='" + process.env.aws_id + "'\n",
 											"ALTER SESSION SET UDPARAMETER FOR awslib aws_secret='" + process.env.aws_secret + "'\n",
@@ -588,7 +591,7 @@ exports.handler =
 										exports.chainStatements(client, statements, function(err, result) {
 											// handle errors and cleanup
 											if (err) {
-												console.log("Load: Failed");
+												console.error("Load: Failed");
                                                                                                 load = "Failed: " + copyCommand ;
 												callback(null, {
 													status : ERROR,
@@ -600,15 +603,15 @@ exports.handler =
 												});
 												client.disconnect();
 											} else {
-												console.log("Load: Success");
+												console.info("Load: Success");
                                                                                                 load = "Success: " + copyCommand ;
 												// Run postLoad Statement, if defined
 												if (clusterInfo.postLoadStatement !== undefined) {
 													var statement = clusterInfo.postLoadStatement;
-													console.log("Execute postLoadStatement: " + statement) ;
+													console.info("Execute postLoadStatement: " + statement) ;
 													client.query(statement, function(err) {
 														if (err) {
-															console.log("postLoadStatement: Failed");
+															console.error("postLoadStatement: Failed");
                                                                                                         		postLoad = "Failed: " + statement ;
 															callback(null, {
 																status : ERROR,
@@ -619,7 +622,7 @@ exports.handler =
                                                                                                         			cluster : clusterInfo.clusterEndpoint
 															});
 														} else {
-															console.log("postLoadStatement: Success");
+															console.info("postLoadStatement: Success");
                                                                                                         		postLoad = "Success: " + statement ;
 															callback(null, {
 																status : OK,
@@ -657,7 +660,7 @@ exports.handler =
 			 * Original version handled failed manifest copies - this code has bene removed, so function is no a no-op.
 			 */
 			exports.failBatch = function(loadState, config, thisBatchId, s3Info, loadStatements) {
-				console.log('Batch failed.');
+				console.error('Batch failed.');
 				exports.closeBatch(loadState, config, thisBatchId, s3Info, loadStatements);
 				};
 
@@ -691,8 +694,8 @@ exports.handler =
 					// ugh, the batch closure didn't finish - this is not a good
 					// place to be
 					if (err) {
-						console.log(err);
-						context.done(error, err);
+						console.error(err);
+						done(context, error, err);
 					} else {
 						// send notifications
 						exports.notify(config, thisBatchId, s3Info, batchError, loadStatements);
@@ -713,7 +716,7 @@ exports.handler =
 						if (failureCallback) {
 							failureCallback(err);
 						} else {
-							console.log(err);
+							console.error(err);
 						}
 					} else {
 						if (successCallback) {
@@ -740,33 +743,33 @@ exports.handler =
 						}
 
 						if (batchError) {
-							console.log(JSON.stringify(batchError));
+							console.error(JSON.stringify(batchError));
 
 							if (config.failuretopicarn) {
 								exports.sendSNS(config.failuretopicarn, "Lambda Vertica Batch Load " + thisBatchId + " Failure",
 										messageBody, function() {
-											context.done(error, JSON.stringify(batchError));
+											done(context, error, JSON.stringify(batchError));
 										}, function(err) {
-											console.log(err);
-											context.done(error, err);
+											console.error(err);
+											done(context, error, err);
 										});
 							} else {
-								context.done(error, batchError);
+								done(context, error, batchError);
 							}
 						} else {
 							if (config.successtopicarn) {
 								exports.sendSNS(config.successtopicarn, "Lambda Vertica Batch Load " + thisBatchId + " OK",
 										messageBody, function() {
-											context.done(null, null);
+											done(context, null, null);
 										}, function(err) {
-											console.log(err);
-											context.done(error, err);
+											console.error(err);
+											done(context, error, err);
 										});
 							} else {
 								// finished OK - no SNS notifications for
 								// success
-								console.log("Batch Load " + thisBatchId + " Complete");
-								context.done(null, null);
+								console.info("Batch Load " + thisBatchId + " Complete");
+								done(context, null, null);
 							}
 						}
 					};
@@ -777,12 +780,12 @@ exports.handler =
 					
 			if (!event.Records) {
 				// filter out unsupported events
-				console.log("Event type unsupported by Lambda Vertica Loader");
-				console.log(JSON.stringify(event));
-				context.done(null, null);
+				console.error("Event type unsupported by Lambda Vertica Loader");
+				console.error(JSON.stringify(event));
+				done(context, null, null);
 			} else {
 				if (event.Records.length > 1) {
-					context.done(error, "Unable to process multi-record events");
+					done(context, error, "Unable to process multi-record events");
 				} else {
 					for (var i = 0; i < event.Records.length; i++) {
 						var r = event.Records[i];
@@ -801,8 +804,8 @@ exports.handler =
 						}
 
 						if (noProcessReason) {
-							console.log(noProcessReason);
-							context.done(error, noProcessReason);
+							console.error(noProcessReason);
+							done(context, error, noProcessReason);
 						} else {
 							// extract the s3 details from the event
 							var inputInfo = {
@@ -811,6 +814,9 @@ exports.handler =
 								prefix : undefined,
 								inputFilename : undefined
 							};
+
+							console.info("Opening connection to Postgres DB");
+              postgresClient = require('./db/postgresConnector').connect();
 
 							inputInfo.bucket = r.s3.bucket.name;
 							inputInfo.key = decodeURIComponent(r.s3.object.key);
@@ -867,8 +873,8 @@ exports.handler =
 								if (err) {
 									// fail the context as we haven't been able to
 									// lookup the onfiguration
-									console.log(err);
-									context.done(error, err);
+									console.error(err);
+									done(context, error, err);
 								} else {
 									// call the foundConfig method with the data item
 									exports.foundConfig(inputInfo, null, configData);

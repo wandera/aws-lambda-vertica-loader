@@ -49,7 +49,7 @@ var rl = readline.createInterface({
 });
 
 // connect to PostgreSQL
-var postgresClient = require('./db/postgresConnector').connect();
+var postgresClient;
 
 const releaseConnection = function () {
   if (postgresClient) {
@@ -62,7 +62,49 @@ process.on('SIGTERM', releaseConnection);
 
 var qs = [];
 
-q_region = function(callback) {
+const q_dbHost = function(callback) {
+  rl.question('Enter the Postgres database host > ', function( answer) {
+    common.validateNotNull(answer, 'You must provide the database host', rl);
+    process.env.postgres_host = answer;
+    callback(null);
+  });
+};
+
+const q_dbPort = function(callback) {
+  rl.question('Enter the Postgres database port [' + dfltPostgresPort + ']> ', function(answer) {
+    if (common.blank(answer) === null) {
+      answer = dfltPostgresPort;
+    }
+    process.env.postgres_port = common.getIntValue(answer, rl);
+    callback(null);
+  });
+};
+
+const q_dbName = function(callback) {
+  rl.question('Enter the Postgres database name > ', function( answer) {
+    common.validateNotNull(answer, 'You must provide the database name', rl);
+    process.env.postgres_database = answer;
+    callback(null);
+  });
+};
+
+const q_dbUser = function(callback) {
+  rl.question('Enter the Postgres database username > ', function( answer) {
+    common.validateNotNull(answer, 'You must provide the database username', rl);
+    process.env.postgres_user = answer;
+    callback(null);
+  });
+};
+
+const q_dbPasswd = function(callback) {
+  rl.question('Enter the Postgres database password for user ' + process.env.postgres_user + ' > ', function( answer) {
+    common.validateNotNull(answer, 'You must provide the database password', rl);
+    process.env.postgres_password = answer;
+    callback(null);
+  });
+};
+
+const q_region = function(callback) {
 	rl.question('Enter the Region for the Configuration [' + dfltRegion + '] > ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltRegion;
@@ -81,7 +123,7 @@ q_region = function(callback) {
 	});
 };
 
-q_s3Prefix = function(callback) {
+const q_s3Prefix = function(callback) {
 	rl.question('Enter the S3 Bucket & Prefix to watch for files [' + dfltS3Prefix + '] > ', function( answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltS3Prefix;
@@ -109,7 +151,7 @@ q_s3Prefix = function(callback) {
 	});
 };
 
-q_s3MountDir = function(callback) {
+const q_s3MountDir = function(callback) {
         rl.question('Enter the s3 prefix for copy command [' + dfltS3MountDir + ']> ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltS3MountDir ;
@@ -119,7 +161,7 @@ q_s3MountDir = function(callback) {
         });
 };
 
-q_filenameFilter = function(callback) {
+const q_filenameFilter = function(callback) {
 	rl.question('Enter a Filename Filter Regex [' + dfltFilenameFilter + ']> ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltFilenameFilter ;
@@ -133,7 +175,7 @@ q_filenameFilter = function(callback) {
 	});
 };
 
-q_clusterEndpoint = function(callback) {
+const q_clusterEndpoint = function(callback) {
 	rl.question('Enter the Vertica Cluster Endpoint (Public IP or DNS name) [' + dfltClusterEndpoint + '] > ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltClusterEndpoint ;
@@ -145,7 +187,7 @@ q_clusterEndpoint = function(callback) {
 	});
 };
 
-q_clusterPort = function(callback) {
+const q_clusterPort = function(callback) {
 	rl.question('Enter the Vertica Cluster Port [' + dfltClusterPort + ']> ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltClusterPort ;
@@ -155,7 +197,7 @@ q_clusterPort = function(callback) {
 	});
 };
 
-q_userName = function(callback) {
+const q_userName = function(callback) {
 	rl.question('Enter the Vertica Database Username [' + dfltUserName + '] > ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltUserName ;
@@ -166,7 +208,7 @@ q_userName = function(callback) {
 	});
 };
 
-q_userPwd = function(callback) {
+const q_userPwd = function(callback) {
 	rl.question('Enter the Vertica Database Password [' + dfltUserPwd + '] > ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltUserPwd ;
@@ -181,7 +223,7 @@ q_userPwd = function(callback) {
 
 
 
-q_table = function(callback) {
+const q_table = function(callback) {
 	rl.question('Enter the Table to be Loaded [' + dfltTable + '] > ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltTable ;
@@ -192,7 +234,7 @@ q_table = function(callback) {
 	});
 };
 
-q_copyOptions = function(callback) {
+const q_copyOptions = function(callback) {
 	rl.question('Load Options - COPY table FROM files [*options*] [' + dfltCopyOptions + ']> ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltCopyOptions ;
@@ -205,7 +247,7 @@ q_copyOptions = function(callback) {
 };
 
 
-q_columns = function(callback) {
+const q_columns = function(callback) {
   rl.question('Copy Columns - COPY table ([*columns*]) FROM files ... [' + dfltColumns + ']> ', function(answer) {
     if (common.blank(answer) === null) {
       answer = dfltColumns;
@@ -217,7 +259,7 @@ q_columns = function(callback) {
   });
 };
 
-q_preLoadStatement = function(callback) {
+const q_preLoadStatement = function(callback) {
   rl.question('Enter SQL statement to run before the load [' + dfltPreLoadStatement + ']> ', function (answer) {
     if (common.blank(answer) === null) {
       answer = dfltPreLoadStatement;
@@ -229,7 +271,7 @@ q_preLoadStatement = function(callback) {
 	});
 };
 
-q_postLoadStatement = function (callback) {
+const q_postLoadStatement = function (callback) {
   rl.question('Enter SQL statement to run after the load [' + dfltPostLoadStatement + ']> ', function (answer) {
     if (common.blank(answer) === null) {
       answer = dfltPostLoadStatement;
@@ -242,7 +284,7 @@ q_postLoadStatement = function (callback) {
 };
 
 
-q_batchSize = function(callback) {
+const q_batchSize = function(callback) {
 	rl.question('How many files should be buffered before loading? [' + dfltBatchSize + '] > ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltBatchSize ;
@@ -254,7 +296,7 @@ q_batchSize = function(callback) {
 	});
 };
 
-q_batchTimeoutSecs = function(callback) {
+const q_batchTimeoutSecs = function(callback) {
 	rl.question('How old should we allow a Batch to be before loading (seconds)? [' + dfltBatchTimeoutSecs + ']> ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltBatchTimeoutSecs ;
@@ -266,7 +308,7 @@ q_batchTimeoutSecs = function(callback) {
 	});
 };
 
-q_successTopic = function(callback) {
+const q_successTopic = function(callback) {
 	rl.question('Enter the SNS Topic ARN for Successful Loads [' + dfltSuccessTopic + '] > ', function( answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltSuccessTopic ;
@@ -278,7 +320,7 @@ q_successTopic = function(callback) {
 	});
 };
 
-q_failureTopic = function(callback) {
+const q_failureTopic = function(callback) {
 	rl.question('Enter the SNS Topic ARN for Failed Loads [' + dfltFailureTopic + '] > ', function(answer) {
                 if (common.blank(answer) === null) {
                         answer = dfltFailureTopic ;
@@ -291,14 +333,15 @@ q_failureTopic = function(callback) {
 };
 
 
-last = function(callback) {
+const last = function(callback) {
 	rl.close();
 
 	setup(null, callback);
 };
 
-setup = function(overrideConfig, callback) {
+const setup = function(overrideConfig, callback) {
 	// set which configuration to use
+  postgresClient = require('./db/postgresConnector').connect();
 	var useConfig = undefined;
 	if (overrideConfig) {
 		useConfig = overrideConfig;
@@ -307,6 +350,7 @@ setup = function(overrideConfig, callback) {
 	}
 
 	var innerCallback = function(err) {
+		console.log("Closing db connection");
 		postgresClient.end();
 		callback(err);
 	};
@@ -318,6 +362,11 @@ setup = function(overrideConfig, callback) {
 // configurations
 exports.setup = setup;
 
+qs.push(q_dbHost);
+qs.push(q_dbPort);
+qs.push(q_dbName);
+qs.push(q_dbUser);
+qs.push(q_dbPasswd);
 qs.push(q_region);
 qs.push(q_s3Prefix);
 qs.push(q_s3MountDir);
