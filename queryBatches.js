@@ -26,7 +26,6 @@ if (process.argv.length < 4) {
 	console.log("You must provide an AWS Region Code, Batch Status, and optionally a start time to query from");
 	process.exit(ERROR);
 }
-var setRegion = process.argv[2];
 var batchStatus = process.argv[3];
 var startDate;
 
@@ -38,53 +37,37 @@ if (process.argv.length > 4) {
 		startDate = ms / 1000;
 	}
 }
+// connect to PostgreSQL
+var Persistence = require('./db/persistence');
+var postgresClient = require('./db/postgresConnector').connect();
 
-var dynamoDB = new aws.DynamoDB({
-	apiVersion : '2012-08-10',
-	region : setRegion
-});
-
-queryItem = {
-	KeyConditions : {
-		status : {
-			ComparisonOperator : 'EQ',
-			AttributeValueList : [ {
-				S : batchStatus
-			} ]
-		}
-	},
-	TableName : batchTable,
-	IndexName : batchStatusGSI
-};
-
-if (startDate) {
-	queryItem.KeyConditions.lastUpdate = {
-		ComparisonOperator : 'GE',
-		AttributeValueList : [ {
-			N : '' + startDate
-		} ]
-	};
+function exit(code) {
+  postgresClient.end();
+  process.exit(code);
 }
-dynamoDB.query(queryItem, function(err, data) {
+
+Persistence.getBatches(postgresClient, batchStatus, startDate, function(err, data) {
 	if (err) {
 		console.log(err);
-		process.exit(ERROR);
+		exit(ERROR);
 	} else {
-		if (data && data.Items) {
+		if (data && data.rows) {
 			var itemsToShow = [];
 
-			for (var i = 0; i < data.Items.length; i++) {
+			for (var i = 0; i < data.rows.length; i++) {
 				toShow = {
-					s3Prefix : data.Items[i].s3Prefix.S,
-					batchId : data.Items[i].batchId.S,
-					lastUpdateDate : common.readableTime(data.Items[i].lastUpdate.N)
+					s3prefix : data.rows[i].s3prefix,
+					batchid : data.rows[i].batchid,
+					lastupdateDate : common.readableTime(data.rows[i].lastupdate)
 				};
 				itemsToShow.push(toShow);
 			}
 
 			console.log(JSON.stringify(itemsToShow));
+			exit(OK);
 		} else {
 			console.log("Unable to query Batch Status");
+			exit(ERROR);
 		}
 	}
 });

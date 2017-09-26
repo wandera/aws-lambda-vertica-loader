@@ -221,8 +221,8 @@ You can use describeBatch.js to
 show all detail for a batch. It takes 3 arguments as well:
 
 * region - the region in which the AWS Lambda function is deployed
-* batchId - the batch you would like to see the detail for
-* s3Prefix - the S3 Prefix the batch was created for
+* batchid - the batch you would like to see the detail for
+* s3prefix - the S3 Prefix the batch was created for
 
 ### Clearing processed files
 We'll only load a file one time by default, but in certain rare cases you might 
