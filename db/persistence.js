@@ -200,7 +200,7 @@ exports.unlockBatch = function(client, entity, callback) {
       "lastupdate = " + entity.lastupdate + "," +
       "status = " + quote(entity.status) + " " +
     "WHERE " +
-      "(status = 'locked' OR status is 'error') AND " +
+      "(status = 'locked' OR status = 'error') AND " +
       "batchid = " + quote(entity.batchid) + " AND " +
       "s3prefix = " + quote(entity.s3prefix);
 
