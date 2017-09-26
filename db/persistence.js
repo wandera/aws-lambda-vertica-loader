@@ -318,6 +318,38 @@ exports.putConfig = function (client, config, callback) {
   client.query(insert, callback);
 };
 
+exports.addLoadCluster = function (client, entity, callback) {
+  const select =
+    "SELECT loadclusters " +
+    "FROM " + DB_STRUCTURE_NAMES.configTable + " " +
+    "WHERE s3prefix = " + quote(entity.s3prefix);
+
+  client.query(select, function (err, data) {
+    if (err) {
+      callback(err);
+    } else {
+      if (data.rowCount < 1) {
+        callback("Failed to add load cluster: Config not found.")
+      } else {
+        console.info("Configuration for prefix " + entity.s3prefix + " found.");
+        const loadClusters = data.rows[0].loadclusters;
+        loadClusters.push(entity.loadCluster);
+
+        const update =
+          "UPDATE " + DB_STRUCTURE_NAMES.configTable + " " +
+          "SET " +
+            "lastupdate = " + entity.lastupdate + ", " +
+            "loadclusters = " + quote(JSON.stringify(loadClusters)) + " " +
+          "WHERE s3prefix = " + quote(entity.s3prefix);
+
+        client.query(update, function(err) {
+          callback(err);
+        });
+      }
+    }
+  })
+};
+
 exports.allocateBatch = function (client, entity, callback) {
   const update =
     "UPDATE " + DB_STRUCTURE_NAMES.configTable + " " +
