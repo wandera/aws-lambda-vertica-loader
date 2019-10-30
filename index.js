@@ -582,8 +582,7 @@ exports.handler =
 										// Run Load statement
 										console.info("Execute load statement: " + copyCommand) ;
 										var statements = [
-											"ALTER SESSION SET UDPARAMETER FOR awslib aws_id='" + process.env.aws_id + "'\n",
-											"ALTER SESSION SET UDPARAMETER FOR awslib aws_secret='" + process.env.aws_secret + "'\n",
+											"ALTER SESSION SET AWSAuth='" + process.env.aws_id + ":" + process.env.aws_secret + "'\n",
 											"ALTER SESSION SET UDPARAMETER FOR awslib aws_region='" + process.env.aws_region + "'\n",
 											copyCommand + "\n"
                     ];
