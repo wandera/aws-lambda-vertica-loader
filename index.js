@@ -398,13 +398,17 @@ exports.handler =
 							// as: serverS3BucketMountDir/<bucketname> (see constants.js)
 							var copyPathItem =  config.s3mountdir + batchEntries[i].replace('+', ' ').replace('%2B', '+');
 							if (!copyPathList) {
-                                                                copyPathList = copyPathItem;
+								copyPathList = exports.wrapToS3GZipPath(copyPathItem);
 							} else {
-								copyPathList += '|' + copyPathItem;
+								copyPathList += ', ' + exports.wrapToS3GZipPath(copyPathItem);
 							}
 						}
 						exports.loadVertica(config, thisBatchId, s3Info, copyPathList);
 					};
+
+			exports.wrapToS3GZipPath = function(rawPath) {
+				return '\'s3://' + rawPath + '\' GZIP';
+			};
 
 			/**
 			 * Function run to invoke loading
@@ -532,7 +536,7 @@ exports.handler =
 									copyCommand += ' (' + columns + ') ';
 								}
 
-								copyCommand += 'source S3(url=\'' + copyPathList + '\')';
+								copyCommand += 'FROM ' + copyPathList;
 
 								// add optional copy options
 								if (config.copyoptions) {
