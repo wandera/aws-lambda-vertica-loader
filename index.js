@@ -407,7 +407,7 @@ exports.handler =
 					};
 
 			exports.wrapToS3GZipPath = function(rawPath) {
-				return '\'s3://' + rawPath + '\' GZIP';
+				return '\'' + rawPath + '\' GZIP';
 			};
 
 			/**
